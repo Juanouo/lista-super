@@ -1,0 +1,5 @@
+hi! Let's plan this project: I want a next.js webpage called "La Lista del Súper" that makes it easy to fill my supermarket list. This is how it'll work.
+
+First, it's connected to @lista-super.md. As you can see it has sections and potentially subsections with items below them. The main idea is that you should be able to click each item (they should be presented as a checklist, so if you click, it gets checked) and it starts getting added to a list, that you can then copy, clear (with a warning before so) and save. What I'm picturing is that you have a panel on the left that uses most of the space, to choose the products and a smaller panel on the right where the list starts getting populated and where you have the buttons to copy, clear or save it (there should be an option somewhere to see earlier lists). For mobile, I leave it up to you how to make this work, maybe the list being populated lives in a floating button that let's you see it, something like that. Ask me any questions to make this work 
+
+
