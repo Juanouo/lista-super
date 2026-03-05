@@ -3,15 +3,25 @@ import { RightPanel } from '@/components/right-panel/RightPanel';
 import { MobileFAB } from '@/components/mobile/MobileFAB';
 import { ListProvider } from '@/hooks/useListState';
 import { Section } from '@/lib/types';
+import { createClient } from '@/lib/supabase';
+import { parseLista } from '@/lib/parse-lista';
 
 async function getSections(): Promise<Section[]> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-    const res = await fetch(`${baseUrl}/api/master-list`, { cache: 'no-store' });
-    if (!res.ok) throw new Error('Failed to fetch');
-    return res.json();
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('master_list')
+      .select('sections')
+      .eq('id', 1)
+      .single();
+
+    if (!error && data) return data.sections as Section[];
+
+    // Seed from markdown if no row exists yet
+    const sections = parseLista();
+    await supabase.from('master_list').upsert({ id: 1, sections });
+    return sections;
   } catch {
-    const { parseLista } = await import('@/lib/parse-lista');
     return parseLista();
   }
 }

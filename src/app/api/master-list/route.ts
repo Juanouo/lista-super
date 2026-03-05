@@ -13,15 +13,17 @@ export async function GET() {
       .single();
 
     if (!error && data) {
+      console.log('[master-list GET] Loaded from Supabase');
       return NextResponse.json(data.sections as Section[]);
     }
 
     // Seed from markdown
+    console.warn('[master-list GET] Supabase error, seeding from markdown:', error);
     const sections = parseLista();
     await supabase.from('master_list').upsert({ id: 1, sections });
     return NextResponse.json(sections);
-  } catch {
-    // Fallback: parse from file if Supabase not configured
+  } catch (e) {
+    console.error('[master-list GET] Exception, falling back to markdown:', e);
     const sections = parseLista();
     return NextResponse.json(sections);
   }
@@ -35,7 +37,10 @@ export async function PUT(request: Request) {
       .from('master_list')
       .upsert({ id: 1, sections, updated_at: new Date().toISOString() });
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      console.error('[master-list PUT] Supabase error:', error);
+      return NextResponse.json({ error: error.message, details: error }, { status: 500 });
+    }
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });

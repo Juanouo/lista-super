@@ -16,7 +16,8 @@ type Action =
   | { type: 'ADD_CUSTOM_ITEM'; sectionId: string; subsectionId?: string; item: ListItem }
   | { type: 'ADD_CUSTOM_SECTION'; section: Section }
   | { type: 'CLEAR_LIST' }
-  | { type: 'SET_SECTIONS'; sections: Section[] };
+  | { type: 'SET_SECTIONS'; sections: Section[] }
+  | { type: 'REORDER_MASTER_ITEM'; sectionId: string; subsectionId?: string; fromId: string; toId: string };
 
 function reducer(state: ListState, action: Action): ListState {
   switch (action.type) {
@@ -101,6 +102,33 @@ function reducer(state: ListState, action: Action): ListState {
     case 'SET_SECTIONS': {
       return { ...state, sections: action.sections };
     }
+    case 'REORDER_MASTER_ITEM': {
+      const { sectionId, subsectionId, fromId, toId } = action;
+      const reorder = <T extends { id: string }>(arr: T[]): T[] => {
+        const items = [...arr];
+        const fromIdx = items.findIndex((i) => i.id === fromId);
+        const toIdx = items.findIndex((i) => i.id === toId);
+        if (fromIdx < 0 || toIdx < 0) return arr;
+        const [moved] = items.splice(fromIdx, 1);
+        items.splice(toIdx, 0, moved);
+        return items;
+      };
+      return {
+        ...state,
+        sections: state.sections.map((section) => {
+          if (section.id !== sectionId) return section;
+          if (subsectionId) {
+            return {
+              ...section,
+              subsections: section.subsections.map((sub) =>
+                sub.id === subsectionId ? { ...sub, items: reorder(sub.items) } : sub
+              ),
+            };
+          }
+          return { ...section, items: reorder(section.items) };
+        }),
+      };
+    }
     default:
       return state;
   }
@@ -113,8 +141,9 @@ interface ListContextValue {
   removeItem: (id: string) => void;
   toggleAll: (items: ActiveItem[]) => void;
   clearList: () => void;
-  addCustomItem: (sectionId: string, item: ListItem, subsectionId?: string) => void;
-  addCustomSection: (section: Section) => void;
+  addCustomItem: (sectionId: string, item: ListItem, subsectionId?: string) => Promise<void>;
+  addCustomSection: (section: Section) => Promise<void>;
+  reorderMasterItem: (sectionId: string, fromId: string, toId: string, subsectionId?: string) => void;
 }
 
 const ListContext = createContext<ListContextValue | null>(null);
@@ -136,12 +165,44 @@ export function ListProvider({
   const removeItem = useCallback((id: string) => dispatch({ type: 'REMOVE_ITEM', id }), []);
   const toggleAll = useCallback((items: ActiveItem[]) => dispatch({ type: 'TOGGLE_ALL', items }), []);
   const clearList = useCallback(() => dispatch({ type: 'CLEAR_LIST' }), []);
+  const reorderMasterItem = useCallback(
+    (sectionId: string, fromId: string, toId: string, subsectionId?: string) => {
+      dispatch({ type: 'REORDER_MASTER_ITEM', sectionId, subsectionId, fromId, toId });
+      // Compute new sections for persistence (mirrors reducer logic)
+      const reorder = <T extends { id: string }>(arr: T[]): T[] => {
+        const items = [...arr];
+        const fromIdx = items.findIndex((i) => i.id === fromId);
+        const toIdx = items.findIndex((i) => i.id === toId);
+        if (fromIdx < 0 || toIdx < 0) return arr;
+        const [moved] = items.splice(fromIdx, 1);
+        items.splice(toIdx, 0, moved);
+        return items;
+      };
+      const newSections = state.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+        if (subsectionId) {
+          return {
+            ...section,
+            subsections: section.subsections.map((sub) =>
+              sub.id === subsectionId ? { ...sub, items: reorder(sub.items) } : sub
+            ),
+          };
+        }
+        return { ...section, items: reorder(section.items) };
+      });
+      fetch('/api/master-list', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sections: newSections }),
+      }).catch(console.error);
+    },
+    [state.sections]
+  );
 
   const addCustomItem = useCallback(
-    (sectionId: string, item: ListItem, subsectionId?: string) => {
+    async (sectionId: string, item: ListItem, subsectionId?: string): Promise<void> => {
       dispatch({ type: 'ADD_CUSTOM_ITEM', sectionId, subsectionId, item });
-      // Persist to Supabase (fire and forget)
-      fetch('/api/master-list', {
+      const res = await fetch('/api/master-list', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,19 +220,25 @@ export function ListProvider({
             return { ...s, items: [...s.items, item] };
           }),
         }),
-      }).catch(console.error);
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('[addCustomItem] Save failed:', body);
+        throw new Error(body.error ?? 'No se pudo guardar el ítem');
+      }
     },
     [state.sections]
   );
 
   const addCustomSection = useCallback(
-    (section: Section) => {
+    async (section: Section): Promise<void> => {
       dispatch({ type: 'ADD_CUSTOM_SECTION', section });
-      fetch('/api/master-list', {
+      const res = await fetch('/api/master-list', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sections: [...state.sections, section] }),
-      }).catch(console.error);
+      });
+      if (!res.ok) throw new Error('No se pudo guardar la sección');
     },
     [state.sections]
   );
@@ -188,6 +255,7 @@ export function ListProvider({
         clearList,
         addCustomItem,
         addCustomSection,
+        reorderMasterItem,
       },
     },
     children

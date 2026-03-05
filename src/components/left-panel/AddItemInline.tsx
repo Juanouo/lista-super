@@ -20,9 +20,10 @@ function slugify(text: string): string {
 export function AddItemInline({ sectionId, subsectionId }: AddItemInlineProps) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
+  const [error, setError] = useState(false);
   const { addCustomItem } = useListState();
 
-  const submit = () => {
+  const submit = async () => {
     const name = value.trim();
     if (!name) { setOpen(false); setValue(''); return; }
     const item: ListItem = {
@@ -30,19 +31,28 @@ export function AddItemInline({ sectionId, subsectionId }: AddItemInlineProps) {
       name,
       isCustom: true,
     };
-    addCustomItem(sectionId, item, subsectionId);
     setValue('');
     setOpen(false);
+    try {
+      await addCustomItem(sectionId, item, subsectionId);
+    } catch {
+      setError(true);
+    }
   };
 
   if (!open) {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-2 py-1 mt-1"
-      >
-        + Agregar ítem
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => { setOpen(true); setError(false); }}
+          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-2 py-1 mt-1"
+        >
+          + Agregar ítem
+        </button>
+        {error && (
+          <span className="text-xs text-destructive mt-1">⚠ Error al guardar</span>
+        )}
+      </div>
     );
   }
 
