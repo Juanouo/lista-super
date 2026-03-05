@@ -3,13 +3,14 @@ import { createClient } from '@/lib/supabase';
 
 export async function GET(
   _request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   const supabase = createClient();
   const { data, error } = await supabase
     .from('saved_lists')
     .select('*')
-    .eq('id', params.id)
+    .eq('id', id)
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 404 });
