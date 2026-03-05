@@ -1,6 +1,9 @@
 'use client';
 
-import { createContext, useContext, useReducer, useCallback, ReactNode, createElement } from 'react';
+import { createContext, useContext, useReducer, useCallback, useEffect, useRef, ReactNode, createElement } from 'react';
+
+const STORAGE_KEY = 'lista-super-active';
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 import { Section, ListItem, ActiveItem } from '@/lib/types';
 
 interface ListState {
@@ -17,7 +20,9 @@ type Action =
   | { type: 'ADD_CUSTOM_SECTION'; section: Section }
   | { type: 'CLEAR_LIST' }
   | { type: 'SET_SECTIONS'; sections: Section[] }
-  | { type: 'REORDER_MASTER_ITEM'; sectionId: string; subsectionId?: string; fromId: string; toId: string };
+  | { type: 'REORDER_MASTER_ITEM'; sectionId: string; subsectionId?: string; fromId: string; toId: string }
+  | { type: 'DELETE_MASTER_ITEM'; sectionId: string; subsectionId?: string; itemId: string }
+  | { type: 'HYDRATE'; checkedItemIds: Set<string>; activeItems: ActiveItem[] };
 
 function reducer(state: ListState, action: Action): ListState {
   switch (action.type) {
@@ -102,6 +107,28 @@ function reducer(state: ListState, action: Action): ListState {
     case 'SET_SECTIONS': {
       return { ...state, sections: action.sections };
     }
+    case 'DELETE_MASTER_ITEM': {
+      const { sectionId, subsectionId, itemId } = action;
+      const newChecked = new Set(state.checkedItemIds);
+      newChecked.delete(itemId);
+      return {
+        ...state,
+        checkedItemIds: newChecked,
+        activeItems: state.activeItems.filter((i) => i.id !== itemId),
+        sections: state.sections.map((section) => {
+          if (section.id !== sectionId) return section;
+          if (subsectionId) {
+            return {
+              ...section,
+              subsections: section.subsections.map((sub) =>
+                sub.id === subsectionId ? { ...sub, items: sub.items.filter((i) => i.id !== itemId) } : sub
+              ),
+            };
+          }
+          return { ...section, items: section.items.filter((i) => i.id !== itemId) };
+        }),
+      };
+    }
     case 'REORDER_MASTER_ITEM': {
       const { sectionId, subsectionId, fromId, toId } = action;
       const reorder = <T extends { id: string }>(arr: T[]): T[] => {
@@ -129,6 +156,9 @@ function reducer(state: ListState, action: Action): ListState {
         }),
       };
     }
+    case 'HYDRATE': {
+      return { ...state, checkedItemIds: action.checkedItemIds, activeItems: action.activeItems };
+    }
     default:
       return state;
   }
@@ -144,6 +174,7 @@ interface ListContextValue {
   addCustomItem: (sectionId: string, item: ListItem, subsectionId?: string) => Promise<void>;
   addCustomSection: (section: Section) => Promise<void>;
   reorderMasterItem: (sectionId: string, fromId: string, toId: string, subsectionId?: string) => void;
+  deleteMasterItem: (sectionId: string, itemId: string, subsectionId?: string) => void;
 }
 
 const ListContext = createContext<ListContextValue | null>(null);
@@ -230,6 +261,30 @@ export function ListProvider({
     [state.sections]
   );
 
+  const deleteMasterItem = useCallback(
+    (sectionId: string, itemId: string, subsectionId?: string) => {
+      dispatch({ type: 'DELETE_MASTER_ITEM', sectionId, subsectionId, itemId });
+      const newSections = state.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+        if (subsectionId) {
+          return {
+            ...section,
+            subsections: section.subsections.map((sub) =>
+              sub.id === subsectionId ? { ...sub, items: sub.items.filter((i) => i.id !== itemId) } : sub
+            ),
+          };
+        }
+        return { ...section, items: section.items.filter((i) => i.id !== itemId) };
+      });
+      fetch('/api/master-list', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sections: newSections }),
+      }).catch(console.error);
+    },
+    [state.sections]
+  );
+
   const addCustomSection = useCallback(
     async (section: Section): Promise<void> => {
       dispatch({ type: 'ADD_CUSTOM_SECTION', section });
@@ -242,6 +297,30 @@ export function ListProvider({
     },
     [state.sections]
   );
+
+  // Hydrate from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) return;
+      const { checkedItemIds, activeItems, savedAt } = JSON.parse(stored);
+      if (Date.now() - savedAt > ONE_WEEK_MS) return;
+      dispatch({ type: 'HYDRATE', checkedItemIds: new Set(checkedItemIds), activeItems });
+    } catch {}
+  }, []);
+
+  // Persist to localStorage on every change (skip the initial empty render)
+  const skipFirstSave = useRef(true);
+  useEffect(() => {
+    if (skipFirstSave.current) { skipFirstSave.current = false; return; }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        checkedItemIds: [...state.checkedItemIds],
+        activeItems: state.activeItems,
+        savedAt: Date.now(),
+      }));
+    } catch {}
+  }, [state.checkedItemIds, state.activeItems]);
 
   return createElement(
     ListContext.Provider,
@@ -256,6 +335,7 @@ export function ListProvider({
         addCustomItem,
         addCustomSection,
         reorderMasterItem,
+        deleteMasterItem,
       },
     },
     children

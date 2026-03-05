@@ -122,7 +122,7 @@ export function SectionBlock({ section }: SectionBlockProps) {
             <span className="text-muted-foreground/30 px-1 cursor-grab active:cursor-grabbing text-base leading-none select-none">
               ⠿
             </span>
-            <ItemRow item={item} sectionTitle={section.title} />
+            <ItemRow item={item} sectionTitle={section.title} sectionId={section.id} />
           </div>
         ))}
         {section.items.length > 0 && section.subsections.length === 0 && (

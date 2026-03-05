@@ -114,7 +114,7 @@ export function SubsectionBlock({ subsection, sectionId, sectionTitle }: Subsect
             <span className="text-muted-foreground/30 px-1 cursor-grab active:cursor-grabbing text-base leading-none select-none">
               ⠿
             </span>
-            <ItemRow item={item} sectionTitle={sectionTitle} />
+            <ItemRow item={item} sectionTitle={sectionTitle} sectionId={sectionId} subsectionId={subsection.id} />
           </div>
         ))}
         <AddItemInline sectionId={sectionId} subsectionId={subsection.id} />
