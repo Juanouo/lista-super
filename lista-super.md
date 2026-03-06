@@ -4,36 +4,60 @@
 - Yogur
 - Yogur proteíco
 
-## Clásicos
-- Mantequilla
-- Pasta
+## DESPENSA
+- Té
+- Manzanilla
+- Aceite
+- Aceite de oliva
 - Arroz
-- Lentejas
+- Pasta
 - Garbanzos
+- Lentejas
+- Barras proteína
+- Avena
+- Mantequilla
+- Sal
+- Azúcar
+- Harina
+- Salsa soya
+- Leche 200 ml
+- Crema 200 ml
 
-
-## Específicos
-- Jugo
+## PICOTEO
 - Mantequilla de maní
+- Jugo
 - Ketchup
-- Carne
 - Papas fritas
 - Maní
 - Cerveza
+- Queso picoteo (Brie, Camembert, Ahumado, Edam)
+- Queso crema
+
+## Proteínas
+- Carne molida
+- Pechuga entera
+- Salmón
+- Trutro deshuesado
 
 # Cocina
 
 - Servilleta
 - Toalla Nova
-- Detergente
 - Esponja
 - Paños
+- Detergente lavaloza
+- Alusa plast
+- Alusa film
+- Papel mantequilla
 
 # Baño
 
 - Jabón
-- Papel comfort
 - Pasta de dientes
+- Papel confort
+- Detergente ropa
+- Quitamanchas
+- Popeye
 
 # Limpieza
 

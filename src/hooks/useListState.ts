@@ -6,7 +6,7 @@ const STORAGE_KEY = 'lista-super-active';
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const SYNCED_MODE = process.env.NEXT_PUBLIC_ACTIVE_LIST_MODE !== 'local';
 
-import { Section, ListItem, ActiveItem } from '@/lib/types';
+import { Section, Subsection, ListItem, ActiveItem } from '@/lib/types';
 import { createClient } from '@/lib/supabase';
 
 interface ListState {
@@ -25,6 +25,10 @@ type Action =
   | { type: 'SET_SECTIONS'; sections: Section[] }
   | { type: 'REORDER_MASTER_ITEM'; sectionId: string; subsectionId?: string; fromId: string; toId: string }
   | { type: 'DELETE_MASTER_ITEM'; sectionId: string; subsectionId?: string; itemId: string }
+  | { type: 'DELETE_SECTION'; sectionId: string }
+  | { type: 'ADD_SUBSECTION'; sectionId: string; subsection: Subsection }
+  | { type: 'RENAME_SUBSECTION'; sectionId: string; subsectionId: string; title: string }
+  | { type: 'MOVE_MASTER_ITEM'; sectionId: string; fromSubsectionId?: string; toSubsectionId?: string; itemId: string; targetItemId?: string }
   | { type: 'HYDRATE'; checkedItemIds: Set<string>; activeItems: ActiveItem[] };
 
 function reducer(state: ListState, action: Action): ListState {
@@ -159,6 +163,93 @@ function reducer(state: ListState, action: Action): ListState {
         }),
       };
     }
+    case 'DELETE_SECTION': {
+      const removedIds = new Set(
+        state.sections
+          .filter((s) => s.id === action.sectionId)
+          .flatMap((s) => [
+            ...s.items.map((i) => i.id),
+            ...s.subsections.flatMap((sub) => sub.items.map((i) => i.id)),
+          ])
+      );
+      const newChecked = new Set(state.checkedItemIds);
+      removedIds.forEach((id) => newChecked.delete(id));
+      return {
+        ...state,
+        checkedItemIds: newChecked,
+        activeItems: state.activeItems.filter((i) => !removedIds.has(i.id)),
+        sections: state.sections.filter((s) => s.id !== action.sectionId),
+      };
+    }
+    case 'RENAME_SUBSECTION': {
+      const { sectionId, subsectionId, title } = action;
+      return {
+        ...state,
+        sections: state.sections.map((s) =>
+          s.id !== sectionId ? s : {
+            ...s,
+            subsections: s.subsections.map((sub) =>
+              sub.id === subsectionId ? { ...sub, title } : sub
+            ),
+          }
+        ),
+      };
+    }
+    case 'ADD_SUBSECTION': {
+      return {
+        ...state,
+        sections: state.sections.map((s) =>
+          s.id === action.sectionId ? { ...s, subsections: [...s.subsections, action.subsection] } : s
+        ),
+      };
+    }
+    case 'MOVE_MASTER_ITEM': {
+      const { sectionId, fromSubsectionId, toSubsectionId, itemId, targetItemId } = action;
+      let movedItem: ListItem | undefined;
+      const afterRemoval = state.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+        if (fromSubsectionId) {
+          return {
+            ...section,
+            subsections: section.subsections.map((sub) => {
+              if (sub.id !== fromSubsectionId) return sub;
+              const found = sub.items.find((i) => i.id === itemId);
+              if (found) movedItem = found;
+              return { ...sub, items: sub.items.filter((i) => i.id !== itemId) };
+            }),
+          };
+        } else {
+          const found = section.items.find((i) => i.id === itemId);
+          if (found) movedItem = found;
+          return { ...section, items: section.items.filter((i) => i.id !== itemId) };
+        }
+      });
+      if (!movedItem) return state;
+      const item = movedItem;
+      const insertItem = (items: ListItem[]): ListItem[] => {
+        if (!targetItemId) return [...items, item];
+        const idx = items.findIndex((i) => i.id === targetItemId);
+        if (idx < 0) return [...items, item];
+        const newItems = [...items];
+        newItems.splice(idx, 0, item);
+        return newItems;
+      };
+      return {
+        ...state,
+        sections: afterRemoval.map((section) => {
+          if (section.id !== sectionId) return section;
+          if (toSubsectionId) {
+            return {
+              ...section,
+              subsections: section.subsections.map((sub) =>
+                sub.id === toSubsectionId ? { ...sub, items: insertItem(sub.items) } : sub
+              ),
+            };
+          }
+          return { ...section, items: insertItem(section.items) };
+        }),
+      };
+    }
     case 'HYDRATE': {
       return { ...state, checkedItemIds: action.checkedItemIds, activeItems: action.activeItems };
     }
@@ -177,7 +268,11 @@ interface ListContextValue {
   addCustomItem: (sectionId: string, item: ListItem, subsectionId?: string) => Promise<void>;
   addCustomSection: (section: Section) => Promise<void>;
   reorderMasterItem: (sectionId: string, fromId: string, toId: string, subsectionId?: string) => void;
+  moveMasterItem: (sectionId: string, fromSubsectionId: string | undefined, toSubsectionId: string | undefined, itemId: string, targetItemId?: string) => void;
   deleteMasterItem: (sectionId: string, itemId: string, subsectionId?: string) => void;
+  deleteSection: (sectionId: string) => void;
+  addSubsection: (sectionId: string, subsection: Subsection) => Promise<void>;
+  renameSubsection: (sectionId: string, subsectionId: string, title: string) => void;
   isSynced: boolean;
 }
 
@@ -279,6 +374,108 @@ export function ListProvider({
           };
         }
         return { ...section, items: section.items.filter((i) => i.id !== itemId) };
+      });
+      fetch('/api/master-list', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sections: newSections }),
+      }).catch(console.error);
+    },
+    [state.sections]
+  );
+
+  const addSubsection = useCallback(
+    async (sectionId: string, subsection: Subsection): Promise<void> => {
+      dispatch({ type: 'ADD_SUBSECTION', sectionId, subsection });
+      const newSections = state.sections.map((s) =>
+        s.id === sectionId ? { ...s, subsections: [...s.subsections, subsection] } : s
+      );
+      const res = await fetch('/api/master-list', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sections: newSections }),
+      });
+      if (!res.ok) throw new Error('No se pudo guardar la subsección');
+    },
+    [state.sections]
+  );
+
+  const deleteSection = useCallback(
+    (sectionId: string) => {
+      dispatch({ type: 'DELETE_SECTION', sectionId });
+      const newSections = state.sections.filter((s) => s.id !== sectionId);
+      fetch('/api/master-list', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sections: newSections }),
+      }).catch(console.error);
+    },
+    [state.sections]
+  );
+
+  const renameSubsection = useCallback(
+    (sectionId: string, subsectionId: string, title: string) => {
+      dispatch({ type: 'RENAME_SUBSECTION', sectionId, subsectionId, title });
+      const newSections = state.sections.map((s) =>
+        s.id !== sectionId ? s : {
+          ...s,
+          subsections: s.subsections.map((sub) =>
+            sub.id === subsectionId ? { ...sub, title } : sub
+          ),
+        }
+      );
+      fetch('/api/master-list', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sections: newSections }),
+      }).catch(console.error);
+    },
+    [state.sections]
+  );
+
+  const moveMasterItem = useCallback(
+    (sectionId: string, fromSubsectionId: string | undefined, toSubsectionId: string | undefined, itemId: string, targetItemId?: string) => {
+      dispatch({ type: 'MOVE_MASTER_ITEM', sectionId, fromSubsectionId, toSubsectionId, itemId, targetItemId });
+      let movedItem: ListItem | undefined;
+      const afterRemoval = state.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+        if (fromSubsectionId) {
+          return {
+            ...section,
+            subsections: section.subsections.map((sub) => {
+              if (sub.id !== fromSubsectionId) return sub;
+              const found = sub.items.find((i) => i.id === itemId);
+              if (found) movedItem = found;
+              return { ...sub, items: sub.items.filter((i) => i.id !== itemId) };
+            }),
+          };
+        } else {
+          const found = section.items.find((i) => i.id === itemId);
+          if (found) movedItem = found;
+          return { ...section, items: section.items.filter((i) => i.id !== itemId) };
+        }
+      });
+      if (!movedItem) return;
+      const item = movedItem;
+      const insertItem = (items: ListItem[]): ListItem[] => {
+        if (!targetItemId) return [...items, item];
+        const idx = items.findIndex((i) => i.id === targetItemId);
+        if (idx < 0) return [...items, item];
+        const newItems = [...items];
+        newItems.splice(idx, 0, item);
+        return newItems;
+      };
+      const newSections = afterRemoval.map((section) => {
+        if (section.id !== sectionId) return section;
+        if (toSubsectionId) {
+          return {
+            ...section,
+            subsections: section.subsections.map((sub) =>
+              sub.id === toSubsectionId ? { ...sub, items: insertItem(sub.items) } : sub
+            ),
+          };
+        }
+        return { ...section, items: insertItem(section.items) };
       });
       fetch('/api/master-list', {
         method: 'PUT',
@@ -406,7 +603,11 @@ export function ListProvider({
         clearList,
         addCustomItem,
         addCustomSection,
+        deleteSection,
+        addSubsection,
+        renameSubsection,
         reorderMasterItem,
+        moveMasterItem,
         deleteMasterItem,
         isSynced: SYNCED_MODE,
       },

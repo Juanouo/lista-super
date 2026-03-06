@@ -3,20 +3,44 @@
 import { useState, useRef, useEffect } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useListState } from '@/hooks/useListState';
-import { Subsection } from '@/lib/types';
-import { ActiveItem } from '@/lib/types';
+import { Subsection, ActiveItem } from '@/lib/types';
 import { ItemRow } from './ItemRow';
 import { AddItemInline } from './AddItemInline';
 import { cn } from '@/lib/utils';
+
+type DragTarget = { itemId: string; subsectionId: string | null };
 
 interface SubsectionBlockProps {
   subsection: Subsection;
   sectionId: string;
   sectionTitle: string;
+  dragItem: DragTarget | null;
+  dragOver: DragTarget | null;
+  onDragStart: (itemId: string, subsectionId: string | null) => void;
+  onDragOver: (e: React.DragEvent, itemId: string, subsectionId: string | null) => void;
+  onDrop: (e: React.DragEvent, targetItemId: string, targetSubsectionId: string | null) => void;
+  onDragEnd: () => void;
+  onTouchStart: (itemId: string, subsectionId: string | null) => void;
+  onTouchMove: (e: React.TouchEvent) => void;
+  onTouchEnd: () => void;
 }
 
-export function SubsectionBlock({ subsection, sectionId, sectionTitle }: SubsectionBlockProps) {
-  const { state, toggleAll, reorderMasterItem } = useListState();
+export function SubsectionBlock({
+  subsection, sectionId, sectionTitle,
+  dragItem, dragOver,
+  onDragStart, onDragOver, onDrop, onDragEnd,
+  onTouchStart, onTouchMove, onTouchEnd,
+}: SubsectionBlockProps) {
+  const { state, toggleAll, renameSubsection } = useListState();
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleValue, setTitleValue] = useState(subsection.title);
+
+  function submitRename() {
+    setEditingTitle(false);
+    const trimmed = titleValue.trim();
+    if (!trimmed || trimmed === subsection.title) { setTitleValue(subsection.title); return; }
+    renameSubsection(sectionId, subsection.id, trimmed);
+  }
 
   const allItems: ActiveItem[] = subsection.items.map((item) => ({
     id: item.id,
@@ -28,56 +52,20 @@ export function SubsectionBlock({ subsection, sectionId, sectionTitle }: Subsect
   const allChecked = allItems.length > 0 && checkedCount === allItems.length;
   const someChecked = checkedCount > 0 && !allChecked;
 
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchDragActive = useRef(false);
+  // Keep containerRef for passive:false touchmove prevention (touchDragActive from parent)
   const containerRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const prevent = (e: TouchEvent) => { if (touchDragActive.current) e.preventDefault(); };
+    // We can't access parent's touchDragActive here, so prevent default on all touchmoves
+    // when an item is being dragged (parent manages actual state)
+    const prevent = (e: TouchEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest('[data-drag-id]')) e.preventDefault();
+    };
     el.addEventListener('touchmove', prevent, { passive: false });
     return () => el.removeEventListener('touchmove', prevent);
   }, []);
-
-  function handleDragStart(id: string) { setDragId(id); }
-  function handleDragOver(e: React.DragEvent, id: string) {
-    e.preventDefault();
-    if (id !== dragId) setDragOverId(id);
-  }
-  function handleDrop(e: React.DragEvent, targetId: string) {
-    e.preventDefault();
-    if (dragId && dragId !== targetId) reorderMasterItem(sectionId, dragId, targetId, subsection.id);
-    setDragId(null); setDragOverId(null);
-  }
-  function handleDragEnd() { setDragId(null); setDragOverId(null); }
-
-  function handleTouchStart(id: string) {
-    longPressTimer.current = setTimeout(() => {
-      touchDragActive.current = true;
-      setDragId(id);
-    }, 400);
-  }
-  function handleTouchMove(e: React.TouchEvent, id: string) {
-    if (!touchDragActive.current) {
-      if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
-      return;
-    }
-    const touch = e.changedTouches[0];
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    const itemEl = el?.closest('[data-drag-id]');
-    const overId = itemEl?.getAttribute('data-drag-id') ?? null;
-    if (overId && overId !== id) setDragOverId(overId);
-  }
-  function handleTouchEnd(id: string) {
-    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
-    if (touchDragActive.current && dragId && dragOverId && dragId !== dragOverId) {
-      reorderMasterItem(sectionId, dragId, dragOverId, subsection.id);
-    }
-    touchDragActive.current = false; setDragId(null); setDragOverId(null);
-  }
 
   return (
     <div className="ml-4 mt-3">
@@ -88,27 +76,45 @@ export function SubsectionBlock({ subsection, sectionId, sectionTitle }: Subsect
           onCheckedChange={() => toggleAll(allItems)}
           className="opacity-60"
         />
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          {subsection.title}
-        </h3>
+        {editingTitle ? (
+          <input
+            autoFocus
+            value={titleValue}
+            onChange={(e) => setTitleValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitRename();
+              if (e.key === 'Escape') { setEditingTitle(false); setTitleValue(subsection.title); }
+            }}
+            onBlur={submitRename}
+            className="text-sm font-medium text-muted-foreground uppercase tracking-wide bg-transparent border-b border-muted-foreground focus:outline-none w-full"
+          />
+        ) : (
+          <h3
+            className="text-sm font-medium text-muted-foreground uppercase tracking-wide cursor-pointer hover:text-foreground"
+            onClick={() => setEditingTitle(true)}
+          >
+            {subsection.title}
+          </h3>
+        )}
       </div>
       <div ref={containerRef} className="ml-2">
         {subsection.items.map((item) => (
           <div
             key={item.id}
             data-drag-id={item.id}
+            data-subsection-id={subsection.id}
             draggable
-            onDragStart={() => handleDragStart(item.id)}
-            onDragOver={(e) => handleDragOver(e, item.id)}
-            onDrop={(e) => handleDrop(e, item.id)}
-            onDragEnd={handleDragEnd}
-            onTouchStart={() => handleTouchStart(item.id)}
-            onTouchMove={(e) => handleTouchMove(e, item.id)}
-            onTouchEnd={() => handleTouchEnd(item.id)}
+            onDragStart={() => onDragStart(item.id, subsection.id)}
+            onDragOver={(e) => onDragOver(e, item.id, subsection.id)}
+            onDrop={(e) => onDrop(e, item.id, subsection.id)}
+            onDragEnd={onDragEnd}
+            onTouchStart={() => onTouchStart(item.id, subsection.id)}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
             className={cn(
               'flex items-center',
-              dragId === item.id && 'opacity-30',
-              dragOverId === item.id && dragId !== item.id && 'border-t-2 border-primary'
+              dragItem?.itemId === item.id && 'opacity-30',
+              dragOver?.itemId === item.id && dragOver?.subsectionId === subsection.id && dragItem?.itemId !== item.id && 'border-t-2 border-primary'
             )}
           >
             <span className="text-muted-foreground/30 px-1 cursor-grab active:cursor-grabbing text-base leading-none select-none">
