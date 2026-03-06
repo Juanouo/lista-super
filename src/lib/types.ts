@@ -23,6 +23,7 @@ export interface ActiveItem {
   id: string;
   name: string;
   sectionTitle: string;
+  note?: string;
 }
 
 export interface SavedListSummary {

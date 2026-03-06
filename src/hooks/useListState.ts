@@ -29,7 +29,8 @@ type Action =
   | { type: 'ADD_SUBSECTION'; sectionId: string; subsection: Subsection }
   | { type: 'RENAME_SUBSECTION'; sectionId: string; subsectionId: string; title: string }
   | { type: 'MOVE_MASTER_ITEM'; sectionId: string; fromSubsectionId?: string; toSubsectionId?: string; itemId: string; targetItemId?: string }
-  | { type: 'HYDRATE'; checkedItemIds: Set<string>; activeItems: ActiveItem[] };
+  | { type: 'HYDRATE'; checkedItemIds: Set<string>; activeItems: ActiveItem[] }
+  | { type: 'SET_ITEM_NOTE'; id: string; note: string };
 
 function reducer(state: ListState, action: Action): ListState {
   switch (action.type) {
@@ -250,6 +251,14 @@ function reducer(state: ListState, action: Action): ListState {
         }),
       };
     }
+    case 'SET_ITEM_NOTE': {
+      return {
+        ...state,
+        activeItems: state.activeItems.map((i) =>
+          i.id === action.id ? { ...i, note: action.note } : i
+        ),
+      };
+    }
     case 'HYDRATE': {
       return { ...state, checkedItemIds: action.checkedItemIds, activeItems: action.activeItems };
     }
@@ -273,6 +282,7 @@ interface ListContextValue {
   deleteSection: (sectionId: string) => void;
   addSubsection: (sectionId: string, subsection: Subsection) => Promise<void>;
   renameSubsection: (sectionId: string, subsectionId: string, title: string) => void;
+  setItemNote: (id: string, note: string) => void;
   isSynced: boolean;
 }
 
@@ -486,6 +496,13 @@ export function ListProvider({
     [state.sections]
   );
 
+  const setItemNote = useCallback(
+    (id: string, note: string) => {
+      dispatch({ type: 'SET_ITEM_NOTE', id, note });
+    },
+    []
+  );
+
   const addCustomSection = useCallback(
     async (section: Section): Promise<void> => {
       dispatch({ type: 'ADD_CUSTOM_SECTION', section });
@@ -609,6 +626,7 @@ export function ListProvider({
         reorderMasterItem,
         moveMasterItem,
         deleteMasterItem,
+        setItemNote,
         isSynced: SYNCED_MODE,
       },
     },

@@ -14,12 +14,15 @@ import {
 } from '@/components/ui/dialog';
 import Link from 'next/link';
 import { ActiveItem } from '@/lib/types';
+import { MessageSquare } from 'lucide-react';
 
 export function ActiveListContent({ onClose }: { onClose?: () => void }) {
-  const { state, clearList, removeItem } = useListState();
+  const { state, clearList, removeItem, setItemNote } = useListState();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
+  const [noteItem, setNoteItem] = useState<ActiveItem | null>(null);
+  const [noteText, setNoteText] = useState('');
 
   const { activeItems } = state;
 
@@ -91,20 +94,58 @@ export function ActiveListContent({ onClose }: { onClose?: () => void }) {
                   key={item.id}
                   className="flex items-center justify-between text-sm group"
                 >
-                  <span>{item.name}</span>
-                  <button
-                    onClick={() => removeItem(item.id)}
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive text-xs px-1 transition-opacity"
-                    title="Quitar"
-                  >
-                    ✕
-                  </button>
+                  <span className="flex-1 min-w-0">
+                    {item.name}
+                    {item.note && (
+                      <span className="ml-1 text-xs text-muted-foreground italic truncate">— {item.note}</span>
+                    )}
+                  </span>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      onClick={() => { setNoteItem(item); setNoteText(item.note ?? ''); }}
+                      className={`${item.note ? 'text-blue-500' : 'opacity-0 group-hover:opacity-100 text-muted-foreground'} hover:text-blue-500 px-1 transition-opacity`}
+                      title={item.note ?? 'Agregar nota'}
+                    >
+                      <MessageSquare size={13} />
+                    </button>
+                    <button
+                      onClick={() => removeItem(item.id)}
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive text-xs px-1 transition-opacity"
+                      title="Quitar"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
           </div>
         ))}
       </div>
+
+      <Dialog open={!!noteItem} onOpenChange={(open) => { if (!open) setNoteItem(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nota para {noteItem?.name}</DialogTitle>
+            <DialogDescription>Agrega una nota o aclaración para este ítem.</DialogDescription>
+          </DialogHeader>
+          <textarea
+            className="w-full border rounded-md p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+            rows={3}
+            placeholder="ej. marca específica, cantidad, etc."
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoteItem(null)}>Cancelar</Button>
+            <Button onClick={() => {
+              if (noteItem) setItemNote(noteItem.id, noteText);
+              setNoteItem(null);
+            }}>Guardar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="p-4 border-t space-y-2">
         <div className="flex gap-2">
