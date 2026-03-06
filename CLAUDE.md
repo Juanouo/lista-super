@@ -18,6 +18,19 @@ Required in `.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+# Optional: set to "local" to use localStorage instead of synced Supabase active list
+# NEXT_PUBLIC_ACTIVE_LIST_MODE=local
+```
+
+**Supabase table for synced active list** (run once in Supabase SQL editor):
+```sql
+create table active_list (
+  id int primary key,
+  items jsonb not null default '[]',
+  updated_at timestamptz not null default now()
+);
+insert into active_list (id, items) values (1, '[]');
+alter publication supabase_realtime add table active_list;
 ```
 
 ## Architecture

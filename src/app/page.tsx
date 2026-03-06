@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { LeftPanel } from '@/components/left-panel/LeftPanel';
 import { RightPanel } from '@/components/right-panel/RightPanel';
 import { MobileFAB } from '@/components/mobile/MobileFAB';

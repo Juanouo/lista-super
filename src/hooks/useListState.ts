@@ -4,7 +4,10 @@ import { createContext, useContext, useReducer, useCallback, useEffect, useRef, 
 
 const STORAGE_KEY = 'lista-super-active';
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const SYNCED_MODE = process.env.NEXT_PUBLIC_ACTIVE_LIST_MODE !== 'local';
+
 import { Section, ListItem, ActiveItem } from '@/lib/types';
+import { createClient } from '@/lib/supabase';
 
 interface ListState {
   checkedItemIds: Set<string>;
@@ -175,6 +178,7 @@ interface ListContextValue {
   addCustomSection: (section: Section) => Promise<void>;
   reorderMasterItem: (sectionId: string, fromId: string, toId: string, subsectionId?: string) => void;
   deleteMasterItem: (sectionId: string, itemId: string, subsectionId?: string) => void;
+  isSynced: boolean;
 }
 
 const ListContext = createContext<ListContextValue | null>(null);
@@ -298,29 +302,97 @@ export function ListProvider({
     [state.sections]
   );
 
-  // Hydrate from localStorage on mount
+  // ── Active list persistence ──────────────────────────────────────────────
+
+  const isHydrated = useRef(false);
+  // Tracks the last items we wrote to avoid re-applying our own realtime echo
+  const lastSyncedItems = useRef<string>('[]');
+
+  // Hydrate on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (!stored) return;
-      const { checkedItemIds, activeItems, savedAt } = JSON.parse(stored);
-      if (Date.now() - savedAt > ONE_WEEK_MS) return;
-      dispatch({ type: 'HYDRATE', checkedItemIds: new Set(checkedItemIds), activeItems });
-    } catch {}
+    if (SYNCED_MODE) {
+      fetch('/api/active-list')
+        .then((r) => r.json())
+        .then((items: ActiveItem[]) => {
+          isHydrated.current = true;
+          lastSyncedItems.current = JSON.stringify(items);
+          dispatch({
+            type: 'HYDRATE',
+            checkedItemIds: new Set(items.map((i) => i.id)),
+            activeItems: items,
+          });
+        })
+        .catch(() => { isHydrated.current = true; });
+    } else {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const { checkedItemIds, activeItems, savedAt } = JSON.parse(stored);
+          if (Date.now() - savedAt <= ONE_WEEK_MS) {
+            dispatch({ type: 'HYDRATE', checkedItemIds: new Set(checkedItemIds), activeItems });
+          }
+        }
+      } catch {}
+      isHydrated.current = true;
+    }
   }, []);
 
-  // Persist to localStorage on every change (skip the initial empty render)
+  // Debounced sync to Supabase (synced mode) or localStorage (local mode)
+  const syncDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipFirstSave = useRef(true);
+
   useEffect(() => {
     if (skipFirstSave.current) { skipFirstSave.current = false; return; }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        checkedItemIds: [...state.checkedItemIds],
-        activeItems: state.activeItems,
-        savedAt: Date.now(),
-      }));
-    } catch {}
+    if (!isHydrated.current) return;
+
+    if (SYNCED_MODE) {
+      if (syncDebounce.current) clearTimeout(syncDebounce.current);
+      syncDebounce.current = setTimeout(() => {
+        const serialized = JSON.stringify(state.activeItems);
+        lastSyncedItems.current = serialized;
+        fetch('/api/active-list', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: state.activeItems }),
+        }).catch(console.error);
+      }, 400);
+    } else {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          checkedItemIds: [...state.checkedItemIds],
+          activeItems: state.activeItems,
+          savedAt: Date.now(),
+        }));
+      } catch {}
+    }
   }, [state.checkedItemIds, state.activeItems]);
+
+  // Realtime subscription (synced mode only)
+  useEffect(() => {
+    if (!SYNCED_MODE) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel('active_list_changes')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'active_list', filter: 'id=eq.1' },
+        (payload) => {
+          const items: ActiveItem[] = (payload.new as { items: ActiveItem[] }).items ?? [];
+          const serialized = JSON.stringify(items);
+          // Skip if this update was triggered by our own write
+          if (serialized === lastSyncedItems.current) return;
+          lastSyncedItems.current = serialized;
+          dispatch({
+            type: 'HYDRATE',
+            checkedItemIds: new Set(items.map((i) => i.id)),
+            activeItems: items,
+          });
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   return createElement(
     ListContext.Provider,
@@ -336,6 +408,7 @@ export function ListProvider({
         addCustomSection,
         reorderMasterItem,
         deleteMasterItem,
+        isSynced: SYNCED_MODE,
       },
     },
     children
